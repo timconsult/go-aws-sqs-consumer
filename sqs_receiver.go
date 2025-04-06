@@ -52,7 +52,8 @@ func (r *SqsReceiver) receiveMessages() {
 
 			if err != nil {
 				log.Println("Could not read from queue", err)
-				return
+				time.Sleep(5 * time.Second)
+				continue
 			}
 
 			if len(result.Messages) > 0 {
