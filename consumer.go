@@ -1,11 +1,13 @@
 package consumer
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -21,7 +23,7 @@ type Consumer struct {
 
 // Config holds the configuration for consuming and processing the queue
 type Config struct {
-	sqsClient                   *sqs.Client
+	SQSClient                   *sqs.Client
 	SqsMaxNumberOfMessages      int32
 	SqsMessageVisibilityTimeout int32
 	Receivers                   int
@@ -29,27 +31,36 @@ type Config struct {
 }
 
 // New creates a new Queue consumer
-func New(queueURL string, handler func(m types.Message) error, config *Config) Consumer {
+func New(queueURL string, handler func(m types.Message) error, consumerConfig *Config) Consumer {
 	c := make(chan []types.Message)
 	shutdown := make(chan os.Signal, 1)
 
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
+	if consumerConfig.SQSClient == nil {
+		cfg, err := config.LoadDefaultConfig(context.TODO())
+		if err != nil {
+			log.Fatal("Unable to load SDK config, " + err.Error())
+		}
+		// use default SQS client
+		consumerConfig.SQSClient = sqs.NewFromConfig(cfg)
+	}
+
 	r := SqsReceiver{
 		queueURL:                queueURL,
 		messagesChannel:         c,
 		shutdown:                shutdown,
-		client:                  config.sqsClient,
-		visibilityTimeout:       config.SqsMessageVisibilityTimeout,
-		maxNumberOfMessages:     config.SqsMaxNumberOfMessages,
-		pollDelayInMilliseconds: config.PollDelayInMilliseconds,
+		client:                  consumerConfig.SQSClient,
+		visibilityTimeout:       consumerConfig.SqsMessageVisibilityTimeout,
+		maxNumberOfMessages:     consumerConfig.SqsMaxNumberOfMessages,
+		pollDelayInMilliseconds: consumerConfig.PollDelayInMilliseconds,
 	}
 
 	return Consumer{
 		queueURL:        queueURL,
 		messagesChannel: c,
 		handler:         handler,
-		config:          config,
+		config:          consumerConfig,
 		receiver:        r,
 	}
 }
@@ -72,7 +83,7 @@ func (c *Consumer) startReceivers() {
 func (c *Consumer) startProcessor() {
 	p := Processor{
 		queueURL: c.queueURL,
-		client:   c.config.sqsClient,
+		client:   c.config.SQSClient,
 		handler:  c.handler,
 	}
 
