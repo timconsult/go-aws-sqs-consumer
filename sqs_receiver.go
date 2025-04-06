@@ -1,22 +1,24 @@
 package consumer
 
 import (
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"context"
 	"log"
 	"os"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-//SqsReceiver defines the struct that polls messages from AWS SQS
+// SqsReceiver defines the struct that polls messages from AWS SQS
 type SqsReceiver struct {
 	queueURL                string
-	messagesChannel         chan []*sqs.Message
+	messagesChannel         chan []types.Message
 	shutdown                chan os.Signal
-	sess                    *session.Session
-	visibilityTimeout       int64
-	maxNumberOfMessages     int64
+	client                  *sqs.Client
+	visibilityTimeout       int32
+	maxNumberOfMessages     int32
 	pollDelayInMilliseconds int
 }
 
@@ -25,26 +27,28 @@ func (r *SqsReceiver) applyBackPressure() {
 }
 
 func (r *SqsReceiver) receiveMessages() {
-	queue := sqs.New(r.sess)
 	for {
-
 		select {
 		case <-r.shutdown:
 			log.Println("Shutting down message receiver")
 			close(r.messagesChannel)
 			return
 		default:
-			result, err := queue.ReceiveMessage(&sqs.ReceiveMessageInput{
-				AttributeNames: []*string{
-					aws.String(sqs.MessageSystemAttributeNameSentTimestamp),
+			result, err := r.client.ReceiveMessage(
+				context.TODO(),
+				&sqs.ReceiveMessageInput{
+					QueueUrl:            aws.String(r.queueURL),
+					MaxNumberOfMessages: r.maxNumberOfMessages,
+					VisibilityTimeout:   r.visibilityTimeout,
+					MessageAttributeNames: []string{
+						"All",
+					},
+					MessageSystemAttributeNames: []types.MessageSystemAttributeName{
+						types.MessageSystemAttributeNameApproximateFirstReceiveTimestamp,
+						types.MessageSystemAttributeNameSentTimestamp,
+					},
 				},
-				MessageAttributeNames: []*string{
-					aws.String(sqs.QueueAttributeNameAll),
-				},
-				QueueUrl:            aws.String(r.queueURL),
-				MaxNumberOfMessages: aws.Int64(r.maxNumberOfMessages),
-				VisibilityTimeout:   aws.Int64(r.visibilityTimeout),
-			})
+			)
 
 			if err != nil {
 				log.Println("Could not read from queue", err)
