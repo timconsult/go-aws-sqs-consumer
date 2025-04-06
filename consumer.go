@@ -1,38 +1,36 @@
 package consumer
 
 import (
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-//Consumer holds the consumer data
+// Consumer holds the consumer data
 type Consumer struct {
 	queueURL        string
-	messagesChannel chan []*sqs.Message
-	handler         func(m *sqs.Message) error
+	messagesChannel chan []types.Message
+	handler         func(m types.Message) error
 	config          *Config
 	receiver        SqsReceiver
 }
 
-//Config holds the configuration for consuming and processing the queue
+// Config holds the configuration for consuming and processing the queue
 type Config struct {
-	AwsSession                  *session.Session
-	SqsMaxNumberOfMessages      int64
-	SqsMessageVisibilityTimeout int64
+	sqsClient                   *sqs.Client
+	SqsMaxNumberOfMessages      int32
+	SqsMessageVisibilityTimeout int32
 	Receivers                   int
 	PollDelayInMilliseconds     int
 }
 
-var sess *session.Session
-
-//New creates a new Queue consumer
-func New(queueURL string, handler func(m *sqs.Message) error, config *Config) Consumer {
-	sess = config.AwsSession
-	c := make(chan []*sqs.Message)
+// New creates a new Queue consumer
+func New(queueURL string, handler func(m types.Message) error, config *Config) Consumer {
+	c := make(chan []types.Message)
 	shutdown := make(chan os.Signal, 1)
 
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
@@ -41,7 +39,7 @@ func New(queueURL string, handler func(m *sqs.Message) error, config *Config) Co
 		queueURL:                queueURL,
 		messagesChannel:         c,
 		shutdown:                shutdown,
-		sess:                    sess,
+		client:                  config.sqsClient,
 		visibilityTimeout:       config.SqsMessageVisibilityTimeout,
 		maxNumberOfMessages:     config.SqsMaxNumberOfMessages,
 		pollDelayInMilliseconds: config.PollDelayInMilliseconds,
@@ -56,7 +54,7 @@ func New(queueURL string, handler func(m *sqs.Message) error, config *Config) Co
 	}
 }
 
-//Start initiates the queue consumption process
+// Start initiates the queue consumption process
 func (c *Consumer) Start() {
 	log.Println("Starting to consume", c.queueURL)
 	c.startReceivers()
@@ -72,11 +70,9 @@ func (c *Consumer) startReceivers() {
 
 // startProcessor starts a goroutine to handle each message from messagesChannel
 func (c *Consumer) startProcessor() {
-	queue := sqs.New(sess)
-
 	p := Processor{
 		queueURL: c.queueURL,
-		queue:    queue,
+		client:   c.config.sqsClient,
 		handler:  c.handler,
 	}
 
@@ -85,7 +81,7 @@ func (c *Consumer) startProcessor() {
 	}
 }
 
-//SetPollDelay increases time between message poll
+// SetPollDelay increases time between a message poll
 func (c *Consumer) SetPollDelay(delayBetweenPoolsInMilliseconds int) {
 	c.receiver.pollDelayInMilliseconds = delayBetweenPoolsInMilliseconds
 }
